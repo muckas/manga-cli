@@ -82,6 +82,10 @@ open_pdf() { # Open PDF using Zathura and run it in the background
 	fi
 }
 
+open_jpg() { # Open first image using command from --image-viewer
+	$image_viewer "${image_dir}/1.jpg"
+}
+
 check_number_input() {
 	min_num="${1}"
 	max_num="${2}"
@@ -281,7 +285,7 @@ scrape_chapter_list() {
 	fi
 }
 
-scrape_chapter() {
+scrape_chapter_pdf() {
 	if [[ -z "${mod_manga_title}" ]]; then
 		manga_title="${result_titles[${selected_manga_num} - 1]}"
 		mod_manga_title="$(printf "%s" "${manga_title}" | tr " " "_")" # Replace spaces with underscores
@@ -322,6 +326,50 @@ scrape_chapter() {
 		done
 
 		wait # Wait until all images are downloaded
+	fi
+}
+
+scrape_chapter_jpg() {
+	if [[ -z "${mod_manga_title}" ]]; then
+		manga_title="${result_titles[${selected_manga_num} - 1]}"
+		mod_manga_title="$(printf "%s" "${manga_title}" | tr " " "_")" # Replace spaces with underscores
+	fi
+
+	image_dir="${cache_dir}/${mod_manga_title}/chapter_${selected_chapter_num}"
+	
+	clear
+ 
+	if [[ ! -d "${image_dir}" ]]; then # If image directory does not exist
+		print_green "Fetching chapter ${selected_chapter_num}..."
+
+		IFS=$'\n'
+
+		chapter_image_urls=($(
+			curl --silent "${chapter_url}" | # Scrape URL
+			sed --silent '/container-chapter-reader/,$p' | # Delete text before 'container-chapter-reader'
+			sed --silent '/max-height: 380px/q;p' | # Delete text after 'max-height: 380px'
+			awk 'BEGIN{RS="\" alt="; FS="src=\""}NF>1{print $NF}' # Get image URLs from HTML 'src' attribute
+		))
+
+		printf "\n"
+		print_blue "Downloading images..."
+
+		i=0
+
+		for image_src in "${chapter_image_urls[@]}"; do
+			((i=i + 1))
+
+			# Download image in the background
+			curl \
+				--silent \
+				--create-dirs \
+				--header 'Referer: https://readmanganato.com/' \
+				--output "${image_dir}/${i}.jpg" \
+				"${image_src}" &
+		done
+
+		wait # Wait until all images are downloaded
+		clear
 	fi
 }
 
@@ -383,7 +431,11 @@ input_controls() {
 			fi
 			;;
 		r)
-			open_pdf
+			if [[ -n "${image_viewer}" ]]; then # image-viewer used
+				open_jpg
+			else
+				open_pdf
+			fi
 			;;
 		a)
 			manga_title_input=
@@ -444,9 +496,14 @@ convert_imgs_to_pdf() {
 }
 
 open_chapter() {
-	scrape_chapter
-	convert_imgs_to_pdf
-	open_pdf
+	if [[ -n "${image_viewer}" ]]; then # image-viewer used
+		scrape_chapter_jpg
+		open_jpg
+	else
+		scrape_chapter_pdf
+		convert_imgs_to_pdf
+		open_pdf
+	fi
 	cache_session
 }
 
@@ -520,6 +577,10 @@ while [[ "${1}" ]]; do
 		-C|--clear-cache)
 			clear_cache
 			exit 0
+			;;
+		-iv|--image-viewer)
+			shift
+			image_viewer="${1}"
 			;;
 		*)	
 			show_help
